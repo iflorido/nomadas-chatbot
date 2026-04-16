@@ -6,7 +6,7 @@
  */
 
 (function () {
-  const API_URL = "https://TU_SUBDOMINIO.nomadassurfpark.com/chat"; // ← cambia esto
+  const API_URL = "https://chat.nomadassurfpark.com/chat"; // ← cambia esto
 
   const style = document.createElement("style");
   style.textContent = `
