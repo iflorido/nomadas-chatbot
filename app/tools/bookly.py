@@ -23,16 +23,34 @@ DAYS = {1: "Lunes", 2: "Martes", 3: "Miércoles", 4: "Jueves",
 async def get_pool() -> aiomysql.Pool:
     global _pool
     if _pool is None:
-        _pool = await aiomysql.create_pool(
-            host=os.getenv("DB_HOST", "localhost"),
-            port=int(os.getenv("DB_PORT", 3306)),
-            db=os.getenv("DB_NAME"),
-            user=os.getenv("DB_USER"),
-            password=os.getenv("DB_PASSWORD"),
-            autocommit=True,
-            minsize=1,
-            maxsize=5,
-        )
+        db_host   = os.getenv("DB_HOST", "localhost")
+        unix_sock = os.getenv("DB_SOCKET", "/var/lib/mysql/mysql.sock")
+
+        # Si DB_HOST es localhost y existe el socket, conectar via Unix socket
+        # Esto evita tener que abrir el puerto TCP 3306 en el host
+        use_socket = (db_host == "localhost" and os.path.exists(unix_sock))
+
+        if use_socket:
+            _pool = await aiomysql.create_pool(
+                unix_socket=unix_sock,
+                db=os.getenv("DB_NAME"),
+                user=os.getenv("DB_USER"),
+                password=os.getenv("DB_PASSWORD"),
+                autocommit=True,
+                minsize=1,
+                maxsize=5,
+            )
+        else:
+            _pool = await aiomysql.create_pool(
+                host=db_host,
+                port=int(os.getenv("DB_PORT", 3306)),
+                db=os.getenv("DB_NAME"),
+                user=os.getenv("DB_USER"),
+                password=os.getenv("DB_PASSWORD"),
+                autocommit=True,
+                minsize=1,
+                maxsize=5,
+            )
     return _pool
 
 
