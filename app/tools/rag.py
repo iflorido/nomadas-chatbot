@@ -1,46 +1,82 @@
 """
-rag.py — Sistema RAG con ChromaDB para documentos propios
-Coloca tus PDFs, TXTs, MDs en knowledge/docs/ y ejecuta: python -m app.tools.rag index
+rag.py — RAG con ChromaDB usando embeddings via OpenAI o Anthropic API
+Sin torch ni sentence-transformers → imagen Docker ~1GB más ligera
+Controlar con EMBEDDING_PROVIDER en .env: openai (defecto) | anthropic_voyage
 """
 
 import os
 import glob
 from pathlib import Path
 import chromadb
-from chromadb.utils import embedding_functions
+from chromadb import Documents, EmbeddingFunction, Embeddings
 from dotenv import load_dotenv
 
 load_dotenv()
 
-DOCS_DIR    = Path(__file__).parent.parent.parent / "knowledge" / "docs"
-CHROMA_DIR  = Path(__file__).parent.parent.parent / "knowledge" / "chroma_db"
-COLLECTION  = "nomadas_knowledge"
+DOCS_DIR   = Path(__file__).parent.parent.parent / "knowledge" / "docs"
+CHROMA_DIR = Path(__file__).parent.parent.parent / "knowledge" / "chroma_db"
+COLLECTION = "nomadas_knowledge"
 
-# Usa OpenAI-compatible embeddings via Anthropic o embeddings locales
-# Por simplicidad usamos el modelo de sentence-transformers local (sin coste)
-_ef = embedding_functions.SentenceTransformerEmbeddingFunction(
-    model_name="paraphrase-multilingual-MiniLM-L12-v2"  # soporta español
-)
+EMBEDDING_PROVIDER = os.getenv("EMBEDDING_PROVIDER", "openai").lower()
 
-_client: chromadb.ClientAPI = None
+
+# ---------------------------------------------------------------------------
+# Embedding functions sin torch
+# ---------------------------------------------------------------------------
+
+class OpenAIEmbeddingFunction(EmbeddingFunction):
+    def __init__(self):
+        from openai import OpenAI
+        self.client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+        self.model  = "text-embedding-3-small"  # barato y rápido
+
+    def __call__(self, input: Documents) -> Embeddings:
+        response = self.client.embeddings.create(model=self.model, input=input)
+        return [item.embedding for item in response.data]
+
+
+class VoyageEmbeddingFunction(EmbeddingFunction):
+    """Voyage AI es el proveedor de embeddings recomendado por Anthropic."""
+    def __init__(self):
+        import voyageai
+        self.client = voyageai.Client(api_key=os.getenv("VOYAGE_API_KEY"))
+        self.model  = "voyage-3-lite"
+
+    def __call__(self, input: Documents) -> Embeddings:
+        result = self.client.embed(input, model=self.model)
+        return result.embeddings
+
+
+def _get_embedding_function():
+    if EMBEDDING_PROVIDER == "voyage":
+        return VoyageEmbeddingFunction()
+    return OpenAIEmbeddingFunction()  # defecto
+
+
+# ---------------------------------------------------------------------------
+# Colección ChromaDB
+# ---------------------------------------------------------------------------
+
 _collection = None
 
-
 def get_collection():
-    global _client, _collection
+    global _collection
     if _collection is None:
-        _client = chromadb.PersistentClient(path=str(CHROMA_DIR))
-        _collection = _client.get_or_create_collection(
+        client = chromadb.PersistentClient(path=str(CHROMA_DIR))
+        _collection = client.get_or_create_collection(
             name=COLLECTION,
-            embedding_function=_ef,
+            embedding_function=_get_embedding_function(),
             metadata={"hnsw:space": "cosine"},
         )
     return _collection
 
 
+# ---------------------------------------------------------------------------
+# Indexación
+# ---------------------------------------------------------------------------
+
 def index_documents():
-    """Indexa todos los archivos de knowledge/docs/"""
-    col = get_collection()
+    col   = get_collection()
     files = glob.glob(str(DOCS_DIR / "**/*"), recursive=True)
     docs, ids, metas = [], [], []
 
@@ -53,27 +89,24 @@ def index_documents():
             try:
                 import pypdf
                 reader = pypdf.PdfReader(str(path))
-                text = "\n".join(p.extract_text() or "" for p in reader.pages)
+                text   = "\n".join(p.extract_text() or "" for p in reader.pages)
             except ImportError:
                 print(f"  pypdf no instalado, saltando {path.name}")
                 continue
         else:
             text = path.read_text(encoding="utf-8", errors="ignore")
 
-        # Dividir en chunks de ~500 palabras
-        words = text.split()
+        words      = text.split()
         chunk_size = 500
         for i, start in enumerate(range(0, len(words), chunk_size)):
             chunk = " ".join(words[start:start + chunk_size])
             if len(chunk.strip()) < 50:
                 continue
-            doc_id = f"{path.stem}_chunk{i}"
             docs.append(chunk)
-            ids.append(doc_id)
+            ids.append(f"{path.stem}_chunk{i}")
             metas.append({"source": path.name, "chunk": i})
 
     if docs:
-        # Upsert para no duplicar en re-indexaciones
         col.upsert(documents=docs, ids=ids, metadatas=metas)
         print(f"✓ Indexados {len(docs)} chunks de {len(files)} archivos")
     else:
@@ -81,28 +114,21 @@ def index_documents():
 
 
 def search(query: str, n_results: int = 3) -> list[dict]:
-    """Busca los fragmentos más relevantes para una query."""
     col = get_collection()
     if col.count() == 0:
         return []
-
     results = col.query(
         query_texts=[query],
         n_results=min(n_results, col.count()),
     )
-
-    output = []
-    for doc, meta, distance in zip(
-        results["documents"][0],
-        results["metadatas"][0],
-        results["distances"][0],
-    ):
-        output.append({
-            "texto":    doc,
-            "fuente":   meta.get("source", "?"),
-            "distancia": round(distance, 3),
-        })
-    return output
+    return [
+        {"texto": doc, "fuente": meta.get("source", "?"), "distancia": round(dist, 3)}
+        for doc, meta, dist in zip(
+            results["documents"][0],
+            results["metadatas"][0],
+            results["distances"][0],
+        )
+    ]
 
 
 if __name__ == "__main__":
