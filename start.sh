@@ -3,7 +3,7 @@ set -e
 
 # Verificar que las variables críticas están presentes
 if [ -z "$OPENAI_API_KEY" ] && [ -z "$ANTHROPIC_API_KEY" ]; then
-    echo "❌ ERROR: No se encontró OPENAI_API_KEY ni ANTHROPIC_API_KEY en el entorno."
+    echo "❌ ERROR: No se encontró OPENAI_API_KEY ni ANTHROPIC_API_KEY en el entorno.."
     echo "   Asegúrate de que el .env está correctamente montado con env_file en docker-compose.yml"
     exit 1
 fi
