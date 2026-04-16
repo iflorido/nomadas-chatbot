@@ -1,0 +1,16 @@
+version: "3.9"
+
+services:
+  chatbot:
+    build: .
+    container_name: nomadas-chatbot
+    restart: unless-stopped
+    ports:
+      - "8018:8018"
+    env_file:
+      - .env
+    volumes:
+      - ./knowledge:/app/knowledge
+    extra_hosts:
+      - "host.docker.internal:host-gateway"  # permite acceder a localhost del VPS
+
