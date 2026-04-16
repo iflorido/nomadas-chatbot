@@ -2,15 +2,14 @@ version: "3.9"
 
 services:
   chatbot:
-    build: .
+    image: ghcr.io/iflorido/nomadas-chatbot:latest
     container_name: nomadas-chatbot
     restart: unless-stopped
     ports:
       - "8018:8018"
     env_file:
-      - .env
+      - /var/www/vhosts/nomadassurfpark.com/chat.nomadassurfpark.com/entorno/.env
     volumes:
-      - ./knowledge:/app/knowledge
+      - /var/www/vhosts/nomadassurfpark.com/chat.nomadassurfpark.com/entorno/knowledge:/app/knowledge
     extra_hosts:
-      - "host.docker.internal:host-gateway"  # permite acceder a localhost del VPS
-
+      - "host.docker.internal:host-gateway"
